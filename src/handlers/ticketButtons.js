@@ -1,70 +1,67 @@
-import {
-    ModalBuilder,
-    TextInputBuilder,
-    TextInputStyle,
-    ActionRowBuilder
-} from 'discord.js';
+const createTicketModalHandler = {
+  name: 'create_ticket_modal',
 
-const ticketTypes = {
-    support_ticket: {
-        title: 'Support Ticket',
-        label: 'How can we help you?',
-        placeholder: 'Describe what you need help with...'
-    },
+  async execute(interaction, client, args) {
+    try {
+      if (!(await ensureGuildContext(interaction))) return;
 
-    player_report: {
-        title: 'Player Report',
-        label: 'Tell us what happened',
-        placeholder: 'Who are you reporting and what did they do?'
-    },
+      const deferSuccess = await InteractionHelper.safeDefer(
+        interaction,
+        { flags: MessageFlags.Ephemeral }
+      );
 
-    bug_report: {
-        title: 'Bug Report',
-        label: 'Describe the bug',
-        placeholder: 'Explain the bug and how it happened...'
-    },
+      if (!deferSuccess) return;
 
-    punishment_appeal: {
-        title: 'Ban/Mute Appeal',
-        label: 'Why should your punishment be appealed?',
-        placeholder: 'Explain why you are appealing your ban or mute...'
-    }
-};
+      const ticketType = args?.[0] || 'support_ticket';
 
-export default {
+      const ticketTypeNames = {
+        support_ticket: 'Support Ticket',
+        player_report: 'Player Report',
+        bug_report: 'Bug Report',
+        punishment_appeal: 'Ban/Mute Appeal'
+      };
 
-    name: 'ticket_type',
+      const ticketTypeName =
+        ticketTypeNames[ticketType] || 'Support Ticket';
 
-    async execute(interaction) {
+      const reason =
+        interaction.fields.getTextInputValue('reason');
 
-        const ticketType = interaction.values[0];
+      const config =
+        await getGuildConfig(client, interaction.guildId);
 
-        const typeData = ticketTypes[ticketType];
+      const categoryId =
+        config.ticketCategoryId || null;
 
-        if (!typeData) {
-            return interaction.reply({
-                content: 'Invalid ticket type.',
-                ephemeral: true
-            });
+      const fullReason =
+        `[${ticketTypeName}] ${reason}`;
+
+      const { channel } = await createTicket(
+        interaction.guild,
+        interaction.member,
+        categoryId,
+        fullReason
+      );
+
+      await interaction.editReply({
+        embeds: [
+          successEmbed(
+            'Ticket Created',
+            `Your **${ticketTypeName}** has been created in ${channel}!`
+          )
+        ]
+      });
+
+    } catch (error) {
+      await handleInteractionError(
+        interaction,
+        error,
+        {
+          type: 'modal',
+          handler: 'ticket',
+          customId: interaction.customId
         }
-
-        const modal = new ModalBuilder()
-            .setCustomId(`create_ticket_modal:${ticketType}`)
-            .setTitle(typeData.title);
-
-        const reasonInput = new TextInputBuilder()
-            .setCustomId('reason')
-            .setLabel(typeData.label)
-            .setStyle(TextInputStyle.Paragraph)
-            .setPlaceholder(typeData.placeholder)
-            .setRequired(true)
-            .setMaxLength(1000);
-
-        const row = new ActionRowBuilder()
-            .addComponents(reasonInput);
-
-        modal.addComponents(row);
-
-        await interaction.showModal(modal);
+      );
     }
+  }
 };
