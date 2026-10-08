@@ -17,55 +17,73 @@ const CHANNEL_ID = '1531035523546743004';
 
 const TYPES = {
   promotion: {
-    title: '📈 Staff Promotion',
+    title: '↗ Staff Promotion',
     color: 0x00fc88,
-    text: 'Moving up in the Tropical SMP team.',
+    description: member => `${member} has been promoted.`,
   },
   demotion: {
-    title: '📉 Staff Demotion',
-    color: 0xed4245,
-    text: 'A change in team responsibilities.',
+    title: '↘ Staff Demotion',
+    color: 0xf87171,
+    description: member => `${member}'s staff rank has been updated.`,
   },
   joining: {
     title: '🌴 Welcome to the Team',
     color: 0x38bdf8,
-    text: 'A new chapter with Tropical SMP.',
+    description: member => `Welcome ${member} to the Tropical SMP team!`,
   },
   departure: {
     title: '👋 Staff Departure',
     color: 0x94a3b8,
-    text: 'Thank you for your time with the team.',
+    description: member =>
+      `${member} has left the staff team.\nThank you for your contribution to Tropical SMP.`,
   },
 };
+
+// Escaping can increase the length of the submitted text.
+// Keep field values within Discord's 1,024-character limit.
+function fieldText(text) {
+  const escaped = escapeMarkdown(text);
+  return escaped.length > 1024
+    ? `${escaped.slice(0, 1020)}…`
+    : escaped;
+}
 
 export default {
   data: new SlashCommandBuilder()
     .setName('staffmove')
-    .setDescription('Create a Tropical SMP staff movement announcement')
+    .setDescription('Create a Tropical SMP staff announcement')
     .setDMPermission(false)
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-    .addUserOption(o =>
-      o.setName('member')
+    .addUserOption(option =>
+      option
+        .setName('member')
         .setDescription('The staff member')
-        .setRequired(true))
-    .addStringOption(o =>
-      o.setName('type')
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName('type')
         .setDescription('Type of staff movement')
         .setRequired(true)
         .addChoices(
-          { name: '📈 Promotion', value: 'promotion' },
-          { name: '📉 Demotion', value: 'demotion' },
+          { name: '↗ Promotion', value: 'promotion' },
+          { name: '↘ Demotion', value: 'demotion' },
           { name: '🌴 Joining the team', value: 'joining' },
-          { name: '👋 Leaving the team', value: 'departure' },
-        ))
-    .addRoleOption(o =>
-      o.setName('previous')
+          { name: '👋 Leaving the team', value: 'departure' }
+        )
+    )
+    .addRoleOption(option =>
+      option
+        .setName('previous')
         .setDescription('Previous rank')
-        .setRequired(true))
-    .addRoleOption(o =>
-      o.setName('new')
+        .setRequired(true)
+    )
+    .addRoleOption(option =>
+      option
+        .setName('new')
         .setDescription('New rank')
-        .setRequired(true)),
+        .setRequired(true)
+    ),
 
   async execute(interaction) {
     if (
@@ -84,6 +102,14 @@ export default {
     const type = interaction.options.getString('type', true);
     const previous = interaction.options.getRole('previous', true);
     const next = interaction.options.getRole('new', true);
+    const style = TYPES[type];
+
+    if (!style) {
+      return interaction.reply({
+        content: 'Please select a valid staff movement type.',
+        flags: MessageFlags.Ephemeral,
+      });
+    }
 
     if (previous.id === next.id) {
       return interaction.reply({
@@ -92,14 +118,17 @@ export default {
       });
     }
 
-    // No ":" in these IDs: your global handler leaves them
-    // to this command's collectors.
+    // Keep IDs without ":" for compatibility with your global handler.
     const modalId = `staffmove_reason_${interaction.id}`;
+    const publishId = `staffmove_publish_${interaction.id}`;
+    const cancelId = `staffmove_cancel_${interaction.id}`;
 
     const reasonInput = new TextInputBuilder()
       .setCustomId('reason')
-      .setLabel('Reason for this staff movement')
-      .setPlaceholder('Explain the change...')
+      .setLabel('Reason for this update')
+      .setPlaceholder(
+        'Example: Consistent activity and excellent support for players.'
+      )
       .setStyle(TextInputStyle.Paragraph)
       .setMinLength(3)
       .setMaxLength(1000)
@@ -107,7 +136,7 @@ export default {
 
     const modal = new ModalBuilder()
       .setCustomId(modalId)
-      .setTitle('Tropical SMP • Staff Movement')
+      .setTitle('Tropical SMP • Staff Update')
       .addComponents(
         new ActionRowBuilder().addComponents(reasonInput)
       );
@@ -115,11 +144,12 @@ export default {
     await interaction.showModal(modal);
 
     let submitted;
+
     try {
       submitted = await interaction.awaitModalSubmit({
-        filter: i =>
-          i.customId === modalId &&
-          i.user.id === interaction.user.id,
+        filter: event =>
+          event.customId === modalId &&
+          event.user.id === interaction.user.id,
         time: 300_000,
       });
     } catch {
@@ -131,7 +161,8 @@ export default {
     });
 
     const reason = submitted.fields
-      .getTextInputValue('reason').trim();
+      .getTextInputValue('reason')
+      .trim();
 
     if (reason.length < 3) {
       return submitted.editReply({
@@ -139,76 +170,74 @@ export default {
       });
     }
 
-    const style = TYPES[type];
-    const icon = interaction.guild.iconURL({ size: 256 });
+    const guildIcon = interaction.guild.iconURL({ size: 128 });
 
     const embed = new EmbedBuilder()
       .setColor(style.color)
       .setAuthor({
-        name: 'TROPICAL SMP • STAFF MOVEMENTS',
-        ...(icon ? { iconURL: icon } : {}),
+        name: 'Tropical SMP',
+        ...(guildIcon ? { iconURL: guildIcon } : {}),
       })
       .setTitle(style.title)
-      .setDescription(
-        `${style.text}\n\n` +
-        `### ${member}\n` +
-        `**${escapeMarkdown(previous.name)}** → ` +
-        `**${escapeMarkdown(next.name)}**`
-      )
-      .setThumbnail(member.displayAvatarURL({ size: 256 }))
+      .setDescription(style.description(`<@${member.id}>`))
+      .setThumbnail(member.displayAvatarURL({ size: 128 }))
       .addFields(
         {
-          name: '📝 Reason',
-          value: escapeMarkdown(reason),
-        },
-        {
-          name: '👤 Updated by',
-          value: `${interaction.user}`,
+          name: 'Previous rank',
+          value: `**${fieldText(previous.name)}**`,
           inline: true,
         },
         {
-          name: '🕒 Date',
-          value: `<t:${Math.floor(Date.now() / 1000)}:f>`,
+          name: 'New rank',
+          value: `**${fieldText(next.name)}**`,
           inline: true,
         },
+        {
+          name: 'Reason',
+          value: fieldText(reason),
+          inline: false,
+        }
       )
-      .setFooter({ text: 'Tropical SMP • Team Update' })
+      .setFooter({
+        text: `Updated by ${interaction.user.username} • Staff Updates`,
+        iconURL: interaction.user.displayAvatarURL({ size: 64 }),
+      })
       .setTimestamp();
-
-    const publishId = `staffmove_publish_${interaction.id}`;
-    const cancelId = `staffmove_cancel_${interaction.id}`;
 
     const buttons = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(publishId)
-        .setLabel('Publish update')
-        .setEmoji('✅')
+        .setLabel('Publish announcement')
         .setStyle(ButtonStyle.Success),
       new ButtonBuilder()
         .setCustomId(cancelId)
         .setLabel('Cancel')
-        .setStyle(ButtonStyle.Secondary),
+        .setStyle(ButtonStyle.Secondary)
     );
 
     const preview = await submitted.editReply({
-      content: `**Preview** • Will be posted in <#${CHANNEL_ID}>`,
+      content:
+        `**Review your announcement**\n` +
+        `Ready to publish in <#${CHANNEL_ID}>.`,
       embeds: [embed],
       components: [buttons],
       allowedMentions: { parse: [] },
     });
 
     let clicked;
+
     try {
       clicked = await preview.awaitMessageComponent({
         componentType: ComponentType.Button,
-        filter: i =>
-          i.user.id === interaction.user.id &&
-          [publishId, cancelId].includes(i.customId),
+        filter: event =>
+          event.user.id === interaction.user.id &&
+          [publishId, cancelId].includes(event.customId),
         time: 120_000,
       });
     } catch {
       return submitted.editReply({
-        content: 'Preview expired. Run /staffmove again.',
+        content: 'This preview expired. Run `/staffmove` to try again.',
+        embeds: [],
         components: [],
       });
     }
@@ -217,62 +246,79 @@ export default {
 
     if (clicked.customId === cancelId) {
       return submitted.editReply({
-        content: 'Staff update cancelled.',
+        content: 'Announcement cancelled.',
         embeds: [],
         components: [],
       });
     }
 
-    // Check permissions again at publication time.
-    const author = await interaction.guild.members.fetch(
-      interaction.user.id
-    );
-
-    if (!author.permissions.has(PermissionFlagsBits.Administrator)) {
-      return submitted.editReply({
-        content: 'You no longer have permission to publish this update.',
-        components: [],
-      });
-    }
+    let message;
 
     try {
+      // Recheck administrator access before publishing.
+      const author = await interaction.guild.members.fetch(
+        interaction.user.id
+      );
+
+      if (!author.permissions.has(PermissionFlagsBits.Administrator)) {
+        return submitted.editReply({
+          content: 'You no longer have permission to publish staff updates.',
+          embeds: [],
+          components: [],
+        });
+      }
+
       const channel = await interaction.guild.channels.fetch(CHANNEL_ID);
       const bot = await interaction.guild.members.fetchMe();
       const permissions = channel?.permissionsFor(bot);
+
+      const sendPermission = channel?.isThread()
+        ? PermissionFlagsBits.SendMessagesInThreads
+        : PermissionFlagsBits.SendMessages;
 
       if (
         !channel?.isTextBased() ||
         typeof channel.send !== 'function' ||
         !permissions?.has([
           PermissionFlagsBits.ViewChannel,
-          PermissionFlagsBits.SendMessages,
+          sendPermission,
           PermissionFlagsBits.EmbedLinks,
         ])
       ) {
-        throw new Error('Missing channel or channel permissions');
+        throw new Error('Missing announcement channel or permissions');
       }
 
       embed.setTimestamp();
 
-      const message = await channel.send({
+      message = await channel.send({
         embeds: [embed],
         allowedMentions: { parse: [] },
-      });
-
-      await submitted.editReply({
-        content: `✅ Staff update published! [View announcement](${message.url})`,
-        embeds: [],
-        components: [],
       });
     } catch (error) {
       console.error('Staff movement publication failed:', error);
 
-      await submitted.editReply({
+      return submitted.editReply({
         content:
-          'Could not publish. Check that the bot can view the updates ' +
-          'channel, send messages, and embed links. Then run /staffmove again.',
+          'Could not publish the announcement. Check the channel ID and ' +
+          'the bot’s View Channel, Send Messages, and Embed Links permissions.',
+        embeds: [],
         components: [],
       });
+    }
+
+    // Keep confirmation errors separate from publication errors.
+    // If this fails, the announcement has already been sent.
+    try {
+      await submitted.editReply({
+        content: `✅ Published successfully. [View announcement](${message.url})`,
+        embeds: [],
+        components: [],
+      });
+    } catch (error) {
+      console.error(
+        'Staff update published, but confirmation could not be updated:',
+        error
+      );
     }
   },
 };
