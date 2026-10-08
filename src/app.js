@@ -46,6 +46,10 @@ import {
 // TROPICAL SMP SERVER STATUS
 // ============================================================
 
+// 10 October 2026, 10:55 AM Europe/Berlin (UTC+02:00).
+const STATUS_START_AT = Date.parse('2026-10-10T10:55:00+02:00');
+const RESTART_GRACE_MS = 180000;
+
 const STATUS_CHANNEL_ID = '1528844537051611349';
 const STATUS_HOST = process.env.MC_HOST || 'tropicalsmp.noob.club';
 
@@ -69,6 +73,14 @@ const STATUS_LABELS = {
       'ᴛʀᴏᴘɪᴄᴀʟ ꜱᴍᴘ ɪꜱ ᴜɴᴅᴇʀ ᴍᴀɪɴᴛᴇɴᴀɴᴄᴇ.\n' +
       'ᴘʟᴀʏᴇʀ ᴀᴄᴄᴇꜱꜱ ɪꜱ ᴄᴜʀʀᴇɴᴛʟʏ ʟɪᴍɪᴛᴇᴅ. ' +
       'ᴡᴇ’ʟʟ ʙᴇ ʙᴀᴄᴋ ꜱᴏᴏɴ!',
+  },
+
+  restarting: {
+    title: '🔄 ꜱᴇʀᴠᴇʀ ʀᴇꜱᴛᴀʀᴛɪɴɢ',
+    color: 0xfee75c,
+    text:
+      'ᴛʀᴏᴘɪᴄᴀʟ ꜱᴍᴘ ɪꜱ ʀᴇꜱᴛᴀʀᴛɪɴɢ.\n' +
+      'ᴘʟᴇᴀꜱᴇ ᴡᴀɪᴛ — ᴡᴇ’ʟʟ ᴘᴏꜱᴛ ᴀɴ ᴜᴘᴅᴀᴛᴇ ᴡʜᴇɴ ɪᴛ’ꜱ ʙᴀᴄᴋ!',
   },
 
   offline: {
@@ -328,6 +340,7 @@ function startMinecraftMonitor(client) {
   let historyLoaded = false;
   let candidate;
   let consecutive = 0;
+  let restartUntil = 0;
 
   const footer = state =>
     `ᴛʀᴏᴘɪᴄᴀʟ ꜱᴍᴘ • ꜱᴇʀᴠᴇʀ ꜱᴛᴀᴛᴜꜱ | ${state}`;
@@ -335,6 +348,8 @@ function startMinecraftMonitor(client) {
   async function check() {
     try {
       if (!client.isReady() || stopped) return;
+      // No checks, channel access, or messages before the launch gate.
+      if (Date.now() < STATUS_START_AT) return;
 
       let result;
       let state;
@@ -346,11 +361,19 @@ function startMinecraftMonitor(client) {
           result.description
         ).replace(/§[0-9a-fk-or]/gi, '');
 
-        state = /currently under maintenance/i.test(motd)
-          ? 'maintenance'
-          : 'online';
+        // A failed ping alone cannot prove that a server is restarting.
+        // Set the MOTD to contain 'restarting' before a planned restart.
+        if (/\brestarting\b|\bserver restart\b/i.test(motd)) {
+          state = 'restarting';
+          restartUntil = Date.now() + RESTART_GRACE_MS;
+        } else {
+          state = /currently under maintenance/i.test(motd)
+            ? 'maintenance'
+            : 'online';
+          restartUntil = 0;
+        }
       } catch (error) {
-        state = 'offline';
+        state = Date.now() < restartUntil ? 'restarting' : 'offline';
 
         logger.warn(
           `Minecraft status check failed: ${error.message}`
@@ -393,6 +416,7 @@ function startMinecraftMonitor(client) {
         });
 
         const previous = messages.find(message =>
+          message.createdTimestamp >= STATUS_START_AT &&
           message.author.id === client.user.id &&
           message.embeds.some(embed =>
             Object.keys(STATUS_LABELS).some(
@@ -416,7 +440,8 @@ function startMinecraftMonitor(client) {
 
       if (
         lastAnnounced === state ||
-        stopped
+        stopped ||
+        Date.now() < STATUS_START_AT
       ) {
         return;
       }
@@ -480,7 +505,10 @@ function startMinecraftMonitor(client) {
     } finally {
       // Schedule after completion to prevent overlapping checks.
       if (!stopped) {
-        timer = setTimeout(check, 15000);
+        const untilStart = STATUS_START_AT - Date.now();
+        timer = setTimeout(check, untilStart > 0
+          ? Math.min(untilStart, 15000)
+          : 15000);
       }
     }
   }
